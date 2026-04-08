@@ -1,0 +1,12 @@
+# sources.conf.example — copy to sources.conf and fill in your URLs
+# sources.conf is gitignored and never committed.
+#
+# Usage:
+#   source sources.conf && bash scripts/scrape.sh "$FAVORITES_URL"
+#   source sources.conf && bash scripts/scrape_subscriptions.sh "$SUBSCRIPTIONS_URL"
+
+# URL to your favorites / watchlist playlist
+FAVORITES_URL=""
+
+# URL to your subscriptions page (used by scrape_subscriptions.sh)
+SUBSCRIPTIONS_URL=""

@@ -205,3 +205,14 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Generated catalog
+catalog/catalog.html
+
+# Local data (metadata, thumbnails, cookies)
+metadata/
+thumbnails/
+cookies/cookies.txt
+
+# Personal URLs — never commit
+sources.conf
