@@ -41,12 +41,14 @@ for f in glob.glob(os.path.join(METADATA_DIR, "*.info.json")):
         print(f"Skipping {f}: {e}")
 
 out.sort(key=lambda v: v["title"].lower())
-videos_json = json.dumps(out, ensure_ascii=False)
+# Escape </script> so embedded JSON can't break the inline script block
+videos_json = json.dumps(out, ensure_ascii=False).replace("</", "<\\/")
 
 tag_counts = Counter(t for v in out for t in v["tags"])
-# Only surface tags that appear in 2+ videos — single-use tags clutter the bar
 all_tags = sorted(t for t, c in tag_counts.items() if c >= 2)
-tags_json = json.dumps(all_tags, ensure_ascii=False)
+tags_json = json.dumps(all_tags, ensure_ascii=False).replace("</", "<\\/")
+
+os.makedirs(CATALOG_DIR, exist_ok=True)
 
 html = f"""<!DOCTYPE html>
 <html>
@@ -103,7 +105,6 @@ html = f"""<!DOCTYPE html>
 </head>
 <body>
   <h1>My Video Catalog</h1>
-  <div class="meta" id="count"></div>
   <div class="toolbar">
     <input type="text" id="search" placeholder="Search titles..." oninput="applyFilters()">
     <select id="sort" onchange="applyFilters()">
@@ -116,6 +117,7 @@ html = f"""<!DOCTYPE html>
     <button onclick="exportJSON()">Export JSON</button>
     <button onclick="exportCSV()">Export CSV</button>
   </div>
+  <div class="meta" id="count"></div>
   <div class="tag-section">
     <button class="tag-toggle" id="tagToggle" onclick="toggleTagBar()">Tags ▾</button>
     <div class="tag-bar" id="tagBar"></div>
@@ -128,8 +130,10 @@ html = f"""<!DOCTYPE html>
     const BATCH = 50;
 
     const FAV_KEY = 'vcat_favs';
-    const favs = new Set(JSON.parse(localStorage.getItem(FAV_KEY) || '[]'));
-    const saveFavs = () => localStorage.setItem(FAV_KEY, JSON.stringify([...favs]));
+    let _ls;
+    try {{ _ls = localStorage; }} catch(e) {{ _ls = null; }}
+    const favs = new Set(JSON.parse((_ls && _ls.getItem(FAV_KEY)) || '[]'));
+    const saveFavs = () => {{ try {{ _ls && _ls.setItem(FAV_KEY, JSON.stringify([...favs])); }} catch(e) {{}} }};
 
     let activeTags = new Set();
     let favFilterOn = false;
@@ -170,7 +174,7 @@ html = f"""<!DOCTYPE html>
     }}
 
     function clearGrid() {{
-      while (grid.firstChild) grid.removeChild(grid.firstChild);
+      grid.replaceChildren();
     }}
 
     function applyFilters() {{
@@ -233,6 +237,7 @@ html = f"""<!DOCTYPE html>
       updateFavBtn(favBtn, v.key);
       favBtn.onclick = (e) => {{
         e.preventDefault();
+        e.stopPropagation();
         favs.has(v.key) ? favs.delete(v.key) : favs.add(v.key);
         saveFavs();
         updateFavBtn(favBtn, v.key);
