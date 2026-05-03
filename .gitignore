@@ -216,3 +216,7 @@ cookies/cookies.txt
 
 # Personal URLs — never commit
 sources.conf
+sources.conf.ps1
+
+# Downloaded video files
+videos/

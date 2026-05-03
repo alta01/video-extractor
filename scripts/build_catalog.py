@@ -7,11 +7,13 @@ Usage: python3 scripts/build_catalog.py
 import json, os, glob
 from collections import Counter
 
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-METADATA_DIR = os.path.join(PROJECT_DIR, "metadata")
+PROJECT_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+METADATA_DIR  = os.path.join(PROJECT_DIR, "metadata")
 THUMBNAILS_DIR = os.path.join(PROJECT_DIR, "thumbnails")
-CATALOG_DIR = os.path.join(PROJECT_DIR, "catalog")
-OUTPUT = os.path.join(CATALOG_DIR, "catalog.html")
+VIDEOS_DIR    = os.path.join(PROJECT_DIR, "videos")
+CATALOG_DIR   = os.path.join(PROJECT_DIR, "catalog")
+OUTPUT        = os.path.join(CATALOG_DIR, "catalog.html")
+VIDEO_EXTS    = ("mp4", "mkv", "webm", "m4v")
 
 out = []
 for f in glob.glob(os.path.join(METADATA_DIR, "*.info.json")):
@@ -32,10 +34,16 @@ for f in glob.glob(os.path.join(METADATA_DIR, "*.info.json")):
         tags = [t for t in tags if isinstance(t, str)][:8]
         views = d.get("view_count") or 0
         likes = d.get("like_count") or 0
+        local_video = ""
+        for ext in VIDEO_EXTS:
+            if os.path.exists(os.path.join(VIDEOS_DIR, f"{vid_id}.{ext}")):
+                local_video = f"../videos/{vid_id}.{ext}"
+                break
         out.append({
             "url": url, "thumb": thumb, "title": title,
             "duration": dur_fmt, "duration_s": int(dur) if dur else 0,
             "key": vid_id, "tags": tags, "views": views, "likes": likes,
+            "local_video": local_video,
         })
     except Exception as e:
         print(f"Skipping {f}: {e}")
@@ -101,6 +109,50 @@ html = f"""<!DOCTYPE html>
       padding: 2px 6px; border-radius: 8px; cursor: pointer; }}
     .card-tag:hover {{ color: #7af; }}
     .hidden {{ display: none; }}
+    /* Download / local-play */
+    .dl-btn {{ display: flex; align-items: center; gap: 5px; margin-top: 7px;
+      background: #1a2a1a; border: 1px solid #3a6a3a; color: #8c8; font-size: 11px;
+      padding: 4px 8px; border-radius: 5px; cursor: pointer; width: 100%; }}
+    .dl-btn:hover {{ background: #243a24; border-color: #5a9a5a; color: #afa; }}
+    .dl-btn.local  {{ background: #1a1a2a; border-color: #3a3a7a; color: #88f; }}
+    .dl-btn.local:hover {{ background: #24243a; border-color: #5a5aaa; color: #aaf; }}
+    .dl-btn.pending {{ color: #888; border-color: #444; background: #1e1e1e; cursor: default; }}
+    .dl-btn .icon  {{ font-size: 13px; flex-shrink: 0; }}
+    /* Video modal */
+    .modal-bg {{ display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.88);
+      z-index: 100; align-items: center; justify-content: center; }}
+    .modal-bg.open {{ display: flex; }}
+    .modal-box {{ background: #111; border-radius: 10px; padding: 16px;
+      max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; gap: 10px; }}
+    .modal-title {{ color: #ddd; font-size: 13px; max-width: 800px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .modal-box video {{ max-width: 800px; max-height: 70vh; border-radius: 6px; background: #000; }}
+    .modal-actions {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
+    .modal-actions a, .modal-actions button {{
+      background: #222; border: 1px solid #444; color: #aaa; font-size: 12px;
+      padding: 5px 12px; border-radius: 5px; cursor: pointer; text-decoration: none; }}
+    .modal-actions a:hover, .modal-actions button:hover {{ border-color: #7af; color: #7af; }}
+    .modal-close {{ margin-left: auto; }}
+    /* Saved views */
+    .views-panel {{ display: none; padding: 0 20px 14px; }}
+    .views-panel.open {{ display: block; }}
+    .views-panel h3 {{ color: #888; font-size: 11px; font-weight: normal;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }}
+    .views-list {{ display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; min-height: 24px; }}
+    .view-chip {{ display: flex; align-items: center; gap: 4px; background: #222;
+      border: 1px solid #444; border-radius: 14px; padding: 3px 6px 3px 10px;
+      font-size: 12px; color: #ccc; cursor: pointer; }}
+    .view-chip:hover {{ border-color: #7af; color: #7af; }}
+    .view-chip .del {{ color: #555; font-size: 14px; line-height: 1; padding: 0 2px;
+      border: none; background: none; cursor: pointer; }}
+    .view-chip .del:hover {{ color: #f77; }}
+    .view-save-row {{ display: flex; gap: 6px; }}
+    .view-save-row input {{ background: #1a1a1a; border: 1px solid #444; color: #ddd;
+      padding: 5px 10px; border-radius: 6px; font-size: 12px; width: 180px; }}
+    .view-save-row button {{ background: #222; border: 1px solid #555; color: #aaa;
+      padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }}
+    .view-save-row button:hover {{ border-color: #7af; color: #7af; }}
+    .no-views {{ color: #555; font-size: 12px; font-style: italic; }}
   </style>
 </head>
 <body>
@@ -116,6 +168,15 @@ html = f"""<!DOCTYPE html>
     <button id="favFilter" onclick="toggleFavFilter()">Starred only</button>
     <button onclick="exportJSON()">Export JSON</button>
     <button onclick="exportCSV()">Export CSV</button>
+    <button id="viewsToggle" onclick="toggleViewsPanel()">Views ▾</button>
+  </div>
+  <div class="views-panel" id="viewsPanel">
+    <h3>Saved views</h3>
+    <div class="views-list" id="viewsList"></div>
+    <div class="view-save-row">
+      <input type="text" id="viewNameInput" placeholder="Name this view..." maxlength="40">
+      <button onclick="saveCurrentView()">Save</button>
+    </div>
   </div>
   <div class="meta" id="count"></div>
   <div class="tag-section">
@@ -123,6 +184,19 @@ html = f"""<!DOCTYPE html>
     <div class="tag-bar" id="tagBar"></div>
   </div>
   <div class="grid" id="grid"></div>
+
+  <!-- Video player modal -->
+  <div class="modal-bg" id="modalBg">
+    <div class="modal-box">
+      <div class="modal-title" id="modalTitle"></div>
+      <video id="modalVideo" controls></video>
+      <div class="modal-actions">
+        <a id="modalOrigLink" href="#" target="_blank">Open original</a>
+        <button onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const videos = {videos_json};
     const allTags = {tags_json};
@@ -140,6 +214,212 @@ html = f"""<!DOCTYPE html>
     let filtered = [];
     let rendered = 0;
     let scrollObserver = null;
+
+    // --- Saved views ---
+    const VIEWS_KEY      = 'vcat_views';
+    const LAST_STATE_KEY = 'vcat_last_state';
+
+    function getViews() {{
+      return JSON.parse((_ls && _ls.getItem(VIEWS_KEY)) || '[]');
+    }}
+
+    function renderViewsList() {{
+      const list = document.getElementById('viewsList');
+      while (list.firstChild) list.removeChild(list.firstChild);
+      const views = getViews();
+      if (!views.length) {{
+        const empty = document.createElement('span');
+        empty.className = 'no-views';
+        empty.textContent = 'No saved views yet';
+        list.appendChild(empty);
+        return;
+      }}
+      views.forEach((v, i) => {{
+        const chip = document.createElement('div');
+        chip.className = 'view-chip';
+        chip.title = `Tags: ${{v.tags.join(', ') || 'none'}}`;
+
+        const label = document.createElement('span');
+        label.textContent = v.name;
+        label.onclick = () => loadView(v);
+
+        const del = document.createElement('button');
+        del.className = 'del';
+        del.textContent = '\u00d7';
+        del.title = 'Delete';
+        del.onclick = (e) => {{ e.stopPropagation(); deleteView(i); }};
+
+        chip.appendChild(label);
+        chip.appendChild(del);
+        list.appendChild(chip);
+      }});
+    }}
+
+    function captureState() {{
+      return {{
+        search:    document.getElementById('search').value,
+        sort:      document.getElementById('sort').value,
+        tags:      [...activeTags],
+        favFilter: favFilterOn,
+      }};
+    }}
+
+    function applyState(state) {{
+      document.getElementById('search').value = state.search || '';
+      document.getElementById('sort').value   = state.sort   || 'title';
+      favFilterOn = !!state.favFilter;
+      document.getElementById('favFilter').classList.toggle('active', favFilterOn);
+      activeTags = new Set(state.tags || []);
+      // Sync tag pill active states
+      document.querySelectorAll('.tag-pill').forEach(p => {{
+        p.classList.toggle('active', activeTags.has(p.textContent));
+      }});
+    }}
+
+    function loadView(view) {{
+      applyState(view);
+      applyFilters();
+    }}
+
+    function saveCurrentView() {{
+      const nameInput = document.getElementById('viewNameInput');
+      const name = nameInput.value.trim();
+      if (!name) {{ nameInput.focus(); return; }}
+      const views = getViews();
+      // Overwrite if same name exists
+      const idx = views.findIndex(v => v.name === name);
+      const entry = {{ name, ...captureState() }};
+      if (idx >= 0) views[idx] = entry; else views.push(entry);
+      try {{ _ls && _ls.setItem(VIEWS_KEY, JSON.stringify(views)); }} catch(e) {{}}
+      nameInput.value = '';
+      renderViewsList();
+    }}
+
+    function deleteView(index) {{
+      const views = getViews();
+      views.splice(index, 1);
+      try {{ _ls && _ls.setItem(VIEWS_KEY, JSON.stringify(views)); }} catch(e) {{}}
+      renderViewsList();
+    }}
+
+    function toggleViewsPanel() {{
+      const panel = document.getElementById('viewsPanel');
+      const btn   = document.getElementById('viewsToggle');
+      const open  = panel.classList.toggle('open');
+      btn.textContent = open ? 'Views \u25b4' : 'Views \u25be';
+      if (open) renderViewsList();
+    }}
+
+    function autoSaveState() {{
+      try {{ _ls && _ls.setItem(LAST_STATE_KEY, JSON.stringify(captureState())); }} catch(e) {{}}
+    }}
+
+    function restoreLastState() {{
+      const raw = _ls && _ls.getItem(LAST_STATE_KEY);
+      if (raw) applyState(JSON.parse(raw));
+    }}
+
+    // --- Local video / download ---
+    const API = 'http://localhost:8765';
+    let serverAvailable = false;
+    fetch(API + '/api/status?id=__probe__').then(() => {{ serverAvailable = true; }}).catch(() => {{}});
+
+    function openModal(v, src) {{
+      const vid = document.getElementById('modalVideo');
+      vid.src = src;
+      vid.play();
+      document.getElementById('modalTitle').textContent = v.title;
+      const origLink = document.getElementById('modalOrigLink');
+      origLink.href = v.url;
+      origLink.style.display = v.url ? '' : 'none';
+      document.getElementById('modalBg').classList.add('open');
+    }}
+
+    function closeModal() {{
+      const bg = document.getElementById('modalBg');
+      const vid = document.getElementById('modalVideo');
+      bg.classList.remove('open');
+      vid.pause();
+      vid.src = '';
+    }}
+    document.getElementById('modalBg').addEventListener('click', e => {{
+      if (e.target === document.getElementById('modalBg')) closeModal();
+    }});
+    document.addEventListener('keydown', e => {{ if (e.key === 'Escape') closeModal(); }});
+
+    function makeDlBtn(v) {{
+      const btn = document.createElement('button');
+      btn.className = 'dl-btn';
+
+      function setState(state, localSrc) {{
+        btn.textContent = '';
+        const icon = document.createElement('span');
+        icon.className = 'icon';
+        const label = document.createElement('span');
+        if (state === 'local') {{
+          icon.textContent = '\u25b6';
+          label.textContent = 'Play local copy';
+          btn.className = 'dl-btn local';
+          btn.onclick = () => openModal(v, localSrc);
+        }} else if (state === 'downloading') {{
+          icon.textContent = '\u29d7';
+          label.textContent = 'Downloading\u2026';
+          btn.className = 'dl-btn pending';
+          btn.onclick = null;
+          // Poll until done
+          const poll = setInterval(() => {{
+            fetch(`${{API}}/api/status?id=${{encodeURIComponent(v.key)}}`)
+              .then(r => r.json())
+              .then(j => {{
+                if (j.status === 'done' && j.path) {{
+                  clearInterval(poll);
+                  setState('local', j.path);
+                }} else if (j.status === 'failed') {{
+                  clearInterval(poll);
+                  setState('failed', '');
+                }}
+              }}).catch(() => clearInterval(poll));
+          }}, 3000);
+        }} else if (state === 'failed') {{
+          icon.textContent = '\u26a0';
+          label.textContent = 'Download failed';
+          btn.className = 'dl-btn pending';
+          btn.onclick = null;
+        }} else {{
+          icon.textContent = '\u2913';
+          label.textContent = 'Download video';
+          btn.className = 'dl-btn';
+          btn.onclick = () => {{
+            if (!serverAvailable) {{
+              alert('Server not running.\\nStart it with: bash scripts/serve.sh');
+              return;
+            }}
+            fetch(`${{API}}/api/download?id=${{encodeURIComponent(v.key)}}&url=${{encodeURIComponent(v.url)}}`)
+              .then(r => r.json())
+              .then(j => setState(j.status === 'done' ? 'local' : 'downloading', j.path || ''))
+              .catch(() => setState('failed', ''));
+            setState('downloading', '');
+          }};
+        }}
+        btn.appendChild(icon);
+        btn.appendChild(label);
+      }}
+
+      // Initial state — use baked-in local_video path if present, else check API
+      if (v.local_video) {{
+        setState('local', v.local_video);
+      }} else if (serverAvailable) {{
+        fetch(`${{API}}/api/status?id=${{encodeURIComponent(v.key)}}`)
+          .then(r => r.json())
+          .then(j => setState(j.status === 'done' && j.path ? 'local' : 'idle', j.path || ''))
+          .catch(() => setState('idle', ''));
+        setState('idle', '');  // render immediately, update async
+      }} else {{
+        setState('idle', '');
+      }}
+
+      return btn;
+    }}
 
     function toggleTagBar() {{
       const bar = document.getElementById('tagBar');
@@ -195,6 +475,7 @@ html = f"""<!DOCTYPE html>
         return 0;
       }});
 
+      autoSaveState();
       if (scrollObserver) scrollObserver.disconnect();
       clearGrid();
       rendered = 0;
@@ -286,6 +567,8 @@ html = f"""<!DOCTYPE html>
         info.appendChild(tagRow);
       }}
 
+      if (v.url) info.appendChild(makeDlBtn(v));
+
       card.appendChild(info);
       return card;
     }}
@@ -322,6 +605,7 @@ html = f"""<!DOCTYPE html>
       setTimeout(() => URL.revokeObjectURL(url), 100);
     }}
 
+    restoreLastState();
     applyFilters();
   </script>
 </body>

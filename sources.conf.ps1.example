@@ -1,0 +1,8 @@
+# sources.conf.ps1.example -- copy to sources.conf.ps1 and fill in your URLs
+# sources.conf.ps1 is gitignored and never committed.
+#
+# Usage: . ./sources.conf.ps1
+#   Then: pwsh scripts/scrape.ps1 $FAVORITES_URL
+
+$FAVORITES_URL     = "https://example-platform.com/users/myusername/videos/favorites"
+$SUBSCRIPTIONS_URL = "https://example-platform.com/users/myusername/subscriptions"

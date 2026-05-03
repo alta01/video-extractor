@@ -5,14 +5,18 @@ A local video catalog tool that fetches metadata and thumbnails from online vide
 ## Features
 
 - Crawls paginated playlist/favorites pages and deduplicates entries across pages
-- Downloads video metadata (title, duration, views, likes, tags) and thumbnails — no video files downloaded
+- Downloads video metadata (title, duration, views, likes, tags) and thumbnails
 - Converts browser cookie exports (JSON) to Netscape format for yt-dlp
 - Generates a dark-themed, searchable HTML catalog with thumbnail grid
   - Sort by title, duration, views, or likes
-  - Filter by tags (click pills or card tags)
+  - Filter by tags (click pills or card tags) — tag bar collapsed by default, only shows tags shared by 2+ videos
   - Star/favorite videos — persisted in localStorage, filterable
+  - **Saved views** — name and save any filter/sort/tag/favorite combination; click "Views ▾" in the toolbar to manage; auto-restores your last view on every reopen
   - Infinite scroll — renders cards in batches of 50
-  - Export current view to JSON or CSV
+  - Export current filtered view to JSON or CSV
+  - **Download videos locally** — one click downloads to `videos/`, with an in-page player; original URL is always preserved
+- Supports YouTube channels and search in addition to other platforms
+- Local catalog server (`serve.sh`) — required for downloading; serves the catalog at `localhost:8765`
 - Warns on expiring cookies before each scrape run
 - Supports geo-restriction bypass via system VPN or proxy
 
@@ -26,21 +30,28 @@ video-extractor/
 ├── cookies/        # Browser cookie exports
 │   ├── cookies.json   # Raw export from browser extension
 │   └── cookies.txt    # Converted Netscape format (used by yt-dlp)
-├── config.sh       # Per-source settings (COOKIES_FILE, PARALLEL, etc.)
+├── videos/         # Downloaded video files (gitignored)
+├── config.sh                  # Per-source settings (COOKIES_FILE, PARALLEL, etc.)
+├── sources.conf.example       # Template for personal URLs (bash)
+├── sources.conf.ps1.example   # Template for personal URLs (PowerShell)
 └── scripts/
-    ├── scrape.sh               # Main crawler — paginates, deduplicates, fetches
-    ├── scrape_subscriptions.sh # Scrape videos for all subscriptions of a PH user
+    ├── scrape.ps1              # Main crawler (PowerShell Core — cross-platform)
+    ├── scrape_subscriptions.ps1
+    ├── scrape_youtube.ps1      # Interactive YouTube channel / search scraper
+    ├── update.ps1              # One-shot: scrape + rebuild catalog
+    ├── check_thumbnails.ps1    # Re-fetch missing thumbnails
+    ├── clean.ps1               # Remove orphaned metadata/thumbnails
+    ├── serve.ps1               # Start the local catalog server
     ├── build_catalog.py        # Rebuilds catalog.html from metadata/
     ├── convert_cookies.py      # Converts Cookie-Editor JSON → Netscape cookies.txt
-    ├── update.sh               # One-shot: scrape + rebuild catalog
-    ├── check_thumbnails.sh     # Re-fetch any missing thumbnails
-    └── clean.sh                # Remove metadata/thumbnails for deleted playlist entries
+    └── serve.py                # HTTP server + download API (port 8765)
 ```
 
 ## Requirements
 
 - `yt-dlp` (2025+ recommended)
 - `python3`
+- `pwsh` — [PowerShell Core 7+](https://github.com/PowerShell/PowerShell) (cross-platform: Linux, macOS, Windows)
 - A browser cookie export for authenticated/geo-unlocked access
 - A system-level VPN if your region restricts access to the target platform
 
@@ -67,8 +78,15 @@ python3 scripts/convert_cookies.py cookies/cookies.json cookies/cookies.txt
 
 ### 3. Store your URLs
 
-Copy `sources.conf.example` to `sources.conf` and fill in your playlist/subscription URLs. This file is gitignored and never committed:
+Copy the appropriate template to a local config file (both are gitignored):
 
+**PowerShell:**
+```powershell
+Copy-Item sources.conf.ps1.example sources.conf.ps1
+# edit sources.conf.ps1 and set $FAVORITES_URL and $SUBSCRIPTIONS_URL
+```
+
+**Bash:**
 ```bash
 cp sources.conf.example sources.conf
 # edit sources.conf and set FAVORITES_URL and SUBSCRIPTIONS_URL
@@ -76,38 +94,91 @@ cp sources.conf.example sources.conf
 
 ### 4. Run the crawler
 
+**PowerShell (cross-platform):**
+```powershell
+. ./sources.conf.ps1
+pwsh scripts/scrape.ps1 $FAVORITES_URL
+```
+
+**Bash:**
 ```bash
 source sources.conf && bash scripts/scrape.sh "$FAVORITES_URL"
 ```
 
 Or pass any URL directly:
-
-```bash
-bash scripts/scrape.sh "https://example-platform.com/users/someuser/favorites"
+```powershell
+pwsh scripts/scrape.ps1 "https://example-platform.com/users/someuser/favorites"
 ```
 
-Flags:
-- `--force` — re-fetch entries that already have local metadata
-- `--parallel N` — fetch N videos concurrently (default: 1)
-- `--limit N` — stop after fetching N new entries (useful for tag/search URLs)
+Flags (PowerShell / bash equivalents):
+- `-Force` / `--force` — re-fetch entries that already have local metadata
+- `-Parallel N` / `--parallel N` — fetch N videos concurrently (default: 1)
+- `-Limit N` / `--limit N` — stop after fetching N new entries
 
 The script warns on expiring cookies, paginates automatically, and stops when a page returns only duplicate IDs.
 
-Works with any URL yt-dlp can paginate — favorites, tag pages, channel/creator pages, search results, etc.
-
 ### 5. Build the catalog
 
-```bash
+```powershell
 python3 scripts/build_catalog.py
 ```
 
 Or use the combined one-shot wrapper:
-
-```bash
-bash scripts/update.sh "https://example-platform.com/users/someuser/favorites"
+```powershell
+pwsh scripts/update.ps1 $FAVORITES_URL
 ```
 
-Open `catalog/catalog.html` in any browser. Thumbnails load from relative paths so the folder is self-contained.
+Open `catalog/catalog.html` in any browser for browsing and search. To enable video downloads, use the server instead (see below).
+
+## Downloading Videos Locally
+
+Each card in the catalog has a **Download video** button. Clicking it uses yt-dlp to save the video to `videos/` (gitignored). Once downloaded, the button changes to **▶ Play local copy**, opening an in-page player. The original source URL is always preserved and accessible from the player.
+
+The download button requires the local server to be running:
+
+```powershell
+pwsh scripts/serve.ps1
+# Catalog available at http://localhost:8765/catalog/catalog.html
+```
+
+You can open the catalog directly from the filesystem without the server — browsing, search, filtering, and favorites all work. Only the download/play feature requires the server.
+
+If a local copy already exists when the catalog is rebuilt (`build_catalog.py`), the Play button appears immediately without needing the server.
+
+Downloaded files are stored in `videos/` as MP4 where possible. The folder is gitignored.
+
+## Scraping YouTube
+
+Scrape a YouTube channel or search results interactively. No cookies required for public content.
+
+```bash
+bash scripts/scrape_youtube.sh
+```
+
+You'll be prompted to choose between a channel or a search term, then for scope:
+
+**Channel scrape — prompted options:**
+- All videos
+- Last N videos (prompts for count)
+- Date range (prompts for YYYYMMDD from/to)
+
+**Search / tag scrape:**
+```
+What do you want to scrape? → 2 (Search)
+Search term or tag: asmr
+Max results [50]: 100
+```
+
+You can also pass a channel URL or flag directly:
+```bash
+bash scripts/scrape_youtube.sh "https://www.youtube.com/@mkbhd"
+bash scripts/scrape_youtube.sh --parallel 4 "https://www.youtube.com/@mkbhd"
+```
+
+After scraping, rebuild the catalog:
+```bash
+python3 scripts/build_catalog.py
+```
 
 ## Scraping Subscriptions
 
